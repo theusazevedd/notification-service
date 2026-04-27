@@ -54,51 +54,124 @@ Essa visão conecta o `notification-service` ao restante do ecossistema: ele é 
 
 ## Tecnologias
 
-| Categoria   | Tecnologia |
-|------------|------------|
-| Runtime    | Java 17   |
-| Framework  | Spring Boot 3.5.x |
-| Web        | Spring Web |
-| E-mail     | Spring Mail (SMTP) |
-| Templates  | Thymeleaf |
-| Build      | Gradle 8.14.x |
+| Categoria | Tecnologia |
+|-----------|------------|
+| Runtime | Java 17 |
+| Framework | Spring Boot 3.5.x |
+| Web | Spring Web |
+| E-mail | Spring Mail (SMTP) |
+| Templates | Thymeleaf |
+| Build | Gradle 8.14.x |
+| Containerização | Docker (multi-stage), Docker Compose |
 
 ## Pré-requisitos
 
-- **JDK 17** (o projeto usa [Java toolchain](notification-service/build.gradle) no Gradle)
-- **Credenciais SMTP** (ex.: Gmail com senha de app, se for o caso)
-- Acesso de rede à porta do servidor de e-mail
+**Desenvolvimento local (Gradle)**
+
+- **JDK 17** — o projeto declara [Java toolchain](notification-service/build.gradle) no Gradle
+- **Credenciais SMTP** (ex.: Gmail com senha de aplicativo)
+- Acesso de rede ao host/porta do servidor de e-mail
+
+**Execução em container**
+
+- **Docker Engine** 20.10+ (ou equivalente compatível)
+- **Docker Compose** v2 (`docker compose`), se for usar o arquivo `docker-compose.yml`
+- Arquivo **`.env`** na raiz do repositório (o Compose referencia `env_file: .env`; mesmas variáveis descritas em **Configuração**)
 
 ## Configuração
 
-Crie as variáveis de ambiente usadas no `application.yaml`:
+As credenciais de envio são lidas de variáveis de ambiente definidas no `application.yaml` do módulo:
 
 | Variável | Descrição |
-|----------|------------|
-| `EMAIL_USERNAME` | Usuário/conta de envio (também usada como `From` / remetente) |
+|----------|-----------|
+| `EMAIL_USERNAME` | Usuário/conta SMTP (também usada como remetente `From`) |
 | `EMAIL_PASSWORD` | Senha ou token do provedor SMTP |
+
+> Para **Gmail**, utilize **senha de aplicativo** (App Password), pois login direto com a senha da conta pode ser bloqueado pelo provedor.
 
 O nome de exibição do remetente é configurado em `envio.email.nomeRemetente` (padrão no YAML: `Javanauta`).
 
-## Executando
+Crie o arquivo local a partir do modelo:
 
-Na raiz **do módulo Gradle** (`notification-service/`):
+```bash
+cp .env.example .env
+```
 
-**Linux / macOS**
+```powershell
+Copy-Item .env.example .env
+```
+
+Edite `.env` com valores reais antes de subir a aplicação (local ou Docker). O repositório não versiona `.env`.
+
+## Execução
+
+A API expõe, por padrão, **`http://localhost:8082`** (porta definida em `application.yaml`).
+
+### Desenvolvimento local (Gradle)
+
+Na pasta do módulo **`notification-service/`**:
 
 ```bash
 cd notification-service
 ./gradlew bootRun
 ```
 
-**Windows (PowerShell)**
-
 ```powershell
 cd notification-service
 .\gradlew.bat bootRun
 ```
 
-A API sobe, por padrão, em `http://localhost:8082`.
+### Docker e Docker Compose
+
+O **`Dockerfile`** na raiz do repositório usa **build multi-stage**: na primeira etapa gera o JAR com Gradle dentro da imagem; na segunda, apenas o JRE 17 (Eclipse Temurin Alpine) executa o artefato. **Não é necessário** rodar `./gradlew build` na máquina host para construir a imagem.
+
+O **contexto de build** é a **raiz do repositório**, porque o `Dockerfile` copia o subdiretório `notification-service/` (código-fonte do módulo).
+
+#### Docker Compose (recomendado)
+
+Na **raiz do repositório** (onde estão `docker-compose.yml` e `Dockerfile`):
+
+```bash
+docker compose up --build -d
+```
+
+```powershell
+docker compose up --build -d
+```
+
+O serviço usa `env_file: .env`, mapeia **`8082:8082`** e define `restart: unless-stopped`. A imagem resultante é etiquetada como **`notification-service:local`**.
+
+Operação do stack:
+
+| Comando | Finalidade |
+|---------|------------|
+| `docker compose logs -f notification-service` | Acompanhar logs do serviço |
+| `docker compose down` | Encerrar e remover containers da stack |
+| `docker compose up --build -d` | Rebuild após alterações no código |
+
+#### Apenas Docker (sem Compose)
+
+Construa a imagem na raiz do repositório:
+
+```bash
+docker build -t notification-service:local -f Dockerfile .
+```
+
+Execute passando o `.env`:
+
+```bash
+docker run --rm --env-file .env -p 8082:8082 notification-service:local
+```
+
+```powershell
+docker run --rm --env-file .env -p 8082:8082 notification-service:local
+```
+
+Parâmetros úteis: `--rm` remove o container ao sair; ajuste `-p` se precisar de outra porta no host.
+
+## Comunicação entre serviços
+
+O serviço é acionado via **HTTP** por outros microserviços (ex.: `task-scheduler-service`). Com **Docker Compose**, a resolução de nomes na rede interna do stack usa o nome do serviço definido no Compose (ex.: `notification-service`).
 
 ## API
 
@@ -143,6 +216,9 @@ Pull requests para a branch `master` disparam o workflow [`.github/workflows/gra
 ## Estrutura (resumo)
 
 ```text
+Dockerfile                     # build multi-stage; contexto na raiz
+docker-compose.yml             # serviço notification-service + .env + porta 8082
+.env.example                   # modelo de variáveis (copiar para .env)
 notification-service/          ← módulo Gradle (código e recursos)
   src/main/java/.../controller/   # REST (`/email`)
   src/main/java/.../business/     # Serviço de e-mail e DTOs
@@ -152,6 +228,11 @@ notification-service/          ← módulo Gradle (código e recursos)
     templates/notificacao.html
 .github/workflows/             # na raiz do repositório
 ```
+
+## Observações
+
+- O serviço **não gerencia estado de tarefas**; persistência e transições de status ficam a cargo de outros componentes do ecossistema.
+- Atua apenas como **camada de entrega** (*notification layer*): formata o conteúdo e envia o e-mail via SMTP.
 
 ## Licença
 
